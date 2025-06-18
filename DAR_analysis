@@ -1,0 +1,158 @@
+#DAR analysis
+seurat_filtered <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/combined_nodoublets_removeepicardialdoublets")
+
+library(chromVAR)
+library(ggplot2)
+library(JASPAR2020)
+library(Signac)
+library(Seurat)
+library(TFBSTools)
+library(motifmatchr)
+library(tidyverse)
+library(cowplot)
+library(BSgenome.Mmusculus.UCSC.mm10)
+#AFmulti <- readRDS('~/Desktop/NGS_analysis/AF_Multiome/031122/AFmulti_final')
+# Install the future package if you haven't already
+install.packages("future")
+install.packages("future.apply")  # For easy parallelized apply functions
+
+# Load the package
+library(future)
+library(future.apply)
+options(future.globals.maxSize = 33 * 1024^3)  # 5GB
+
+plan(multisession, workers = 8)  # Set number of workers/cores (e.g., 4)
+ DefaultAssay(seurat_filtered) <- "ATAC"
+pwm_set <- getMatrixSet(x = JASPAR2020, opts = list(species = 9606, all_versions = FALSE)) #10090 Mus musculus
+motif.matrix <- CreateMotifMatrix(features = granges(seurat_filtered), pwm = pwm_set, genome = 'mm10', use.counts = FALSE)
+motif.object <- CreateMotifObject(data = motif.matrix, pwm = pwm_set)
+seurat_filtered <- SetAssayData(seurat_filtered, assay = 'ATAC', slot = 'motifs', new.data = motif.object)
+
+main.chroms <- standardChromosomes(BSgenome.Mmusculus.UCSC.mm10)
+keep.peaks <- which(as.character(seqnames(granges(seurat_filtered))) %in% main.chroms)
+seurat_filtered[["ATAC"]] <- subset(seurat_filtered[["ATAC"]], features = rownames(seurat_filtered[["ATAC"]])[keep.peaks])
+
+###### Working
+# test enrichment
+###Start here 
+DefaultAssay(seurat_filtered) <- 'ATAC'
+da_peaks <- FindMarkers(
+  object = seurat_filtered,
+  ident.1 = 'aCM_1',
+  ident.2 = 'aCM_2',
+  only.pos = FALSE,
+  test.use = 'LR',
+  min.pct = 0.05,
+  latent.vars = 'nCount_ATAC'
+)
+# get top differentially accessible peaks
+top.da.peak <- rownames(da_peaks[da_peaks$p_val < 0.005, ])
+enriched.motifs <- FindMotifs(
+  object = seurat_filtered,
+  features = top.da.peak
+)
+library('ggseqlogo')
+MotifPlot(
+  object = seurat_filtered,
+  motifs = head(rownames(enriched.motifs))
+)
+setwd('~/Desktop/NGS_analysis/CHD4_TBX5/multiome/ATAC/motif')
+write.csv(da_peaks, file= 'Myocyte_6TBX5.csv')
+
+
+##volcano plot of DARs
+setwd(dir = '~/Desktop/NGS_analysis/CHD4_TBX5/multiome/ATAC')
+DARS <- read.csv('differentially_accessible_regions_aCM1vaCM6.csv')
+
+library(dplyr)
+# Create a custom column for highlighting significant DEGs
+DARS <- DARS %>%
+  mutate(threshold = ifelse(p_val_adj < 0.05 & abs(avg_log2FC) > 0.5, 
+                            ifelse(avg_log2FC > 0.5, "Upregulated", "Downregulated"), "Not Significant"))
+# Create the volcano plot
+volcano_plot <- ggplot(DARS, aes(x = avg_log2FC, y = -log10(p_val_adj))) +
+  
+  # Plot the points, coloring by significance threshold
+  geom_point(aes(color = threshold), alpha = 0.8, size = 2.5) +
+  
+  # Add color scales for the different significance categories
+  scale_color_manual(values = c("Upregulated" = "purple", "Downregulated" = "forestgreen", "Not Significant" = "grey")) +
+  
+  # Add labels for genes that are highly significant (you can adjust the filter)
+  # geom_text_repel(data = subset(markers, p_val_adj < 0.05 & abs(avg_log2FC) > 2.5), 
+  #                aes(label = gene), size = 3, max.overlaps = 10) +
+  
+  # Add titles and labels
+  labs(title = "Volcano Plot of DARS",
+       x = "log2 Fold Change",
+       y = "-log10 Adjusted p-value") +
+  
+  # Customize the appearance
+  theme_minimal() +
+  theme(legend.position = "right", 
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+
+# Print the plot
+print(volcano_plot)
+## Overlapp with regions greater bound by CHD4 in the presence of TBX5
+# Install required packages if you don't have them
+# install.packages("GenomicRanges")
+# install.packages("IRanges")
+
+library(GenomicRanges)
+library(ggplot2)
+library(dplyr)
+# Step 1: Convert DARS regions to BED format
+# Assuming DARS has the 'X' column as described earlier, split into chrom, start, end
+DARS <- DARS %>%
+  mutate(chrom = sapply(strsplit(X, "-"), `[`, 1),
+         start = as.numeric(sapply(strsplit(X, "-"), `[`, 2)),
+         end = as.numeric(sapply(strsplit(X, "-"), `[`, 3)))
+
+# Create a temporary BED file for DARS
+write.table(DARS %>% select(chrom, start, end, avg_log2FC, p_val_adj),
+            file = "DARS_temp.bed", sep = "\t", col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+# Step 2: Run bedtools intersect using system() command in R
+# Replace "path_to_bed_file.bed" with the actual path to your BED file
+system("bedtools intersect -a DARS_temp.bed -b chd4_regions_gfp.bed -wa > DARS_bedtools_output.bed")
+
+# Step 3: Read the output back into R
+overlap_bed <- read.table("DARS_bedtools_output.bed", header = FALSE)
+colnames(overlap_bed) <- c("chrom", "start", "end", "avg_log2FC", "p_val_adj")
+
+# Step 4: Mark overlaps in the original DARS data
+DARS$bed_match <- ifelse(paste(DARS$chrom, DARS$start, DARS$end) %in% paste(overlap_bed$chrom, overlap_bed$start, overlap_bed$end), 
+                         "BED Region", "Non-BED Region")
+
+
+volcano_plot <- ggplot(DARS, aes(x = avg_log2FC, y = -log10(p_val_adj))) +
+  
+  # Plot points, coloring by both significance threshold and BED file match
+  geom_point(aes(color = interaction(threshold, bed_match)), alpha = 0.8, size = 2.5) +
+
+  scale_color_manual(values = c("Upregulated.Non-BED Region" = "purple",
+                                "Downregulated.Non-BED Region" = "forestgreen",
+                                "Not Significant.Non-BED Region" = "grey",
+                                "Upregulated.BED Region" = "red",  # Color for BED regions
+                                "Downregulated.BED Region" = "blue",  # Another color for BED regions
+                                "Not Significant.BED Region" = "orange")) +
+  
+
+  labs(title = "Volcano Plot of DARS with BED Regions Highlighted",
+       x = "log2 Fold Change",
+       y = "-log10 Adjusted p-value") +
+  
+
+  theme_minimal() +
+  theme(legend.position = "right", 
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+
+print(volcano_plot)
+
+write.csv(DARS, 'volcano_plot_DAR_regions_overlapped_CHD4_GFP.csv')
+
