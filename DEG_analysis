@@ -1,0 +1,237 @@
+seurat_filtered <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/combined_nodoublets_removeepicardialdoublets")
+
+DefaultAssay(seurat_filtered)<-'RNA'
+Idents(seurat_filtered) <- "cell_state"
+markers <- FindMarkers(seurat_filtered, ident.1 = "aCM_1", ident.2 = "aCM_2",logfc.threshold = 0.0 )
+markers$gene <- row.names(markers)
+
+
+### compare TBX5 and CHD4 datasets
+
+# Merge the dataframes by the gene column
+merged_data <- inner_join(Myo1vMyo6, markers, by = "gene")
+data <- merged_data
+# Load necessary libraries
+library(ggplot2)
+
+
+
+# Create a significance column based on p-value adjustments
+data$significance <- "Not Significant"
+data$significance[data$p_val_adj.x < 0.05 & data$p_val_adj.y < 0.05] <- "Significant in Both"
+data$significance[data$p_val_adj.x < 0.05 & data$p_val_adj.y >= 0.05] <- "Significant in TBX5"
+data$significance[data$p_val_adj.x >= 0.05 & data$p_val_adj.y < 0.05] <- "Significant in CHD4"
+
+# Plot avg.log2fc.x vs avg.log2fc.y colored by significance
+plot <- ggplot(data, aes(x = avg_log2FC.x, y = avg_log2FC.y, color = significance)) +
+  geom_point() +
+  labs(title = "TBX5 vs CHD4 log2 Fold Change",
+       x = "TBX5 avg.log2fc",
+       y = "CHD4 avg.log2fc") +
+  theme_minimal()
+
+# Display the plot
+print(plot)
+
+### add aCM and vCM genes to this plot for signifcant in both datasets
+
+df <- data.frame(x = data$avg_log2FC.x, y = data$avg_log2FC.y, 
+                 sig1 = data$p_val_adj.x, sig2 = data$p_val_adj.y, gene = data$gene)
+
+# Create a new column to indicate the significance level of each data point
+df$sig <- ifelse(df$sig1 < 0.05 & df$sig2 < 0.05, "Both significant",
+                 ifelse(df$sig1 < 0.05 & df$sig2 >= 0.05, "TBX5 significant",
+                        ifelse(df$sig1 >= 0.05 & df$sig2 < 0.05, "CHD4 significant",
+                               "Not significant")))
+library(dplyr)
+
+df1 = filter(df, sig == "Both significant")
+
+correlation = cor.test(df1$x, df1$y)
+
+print(correlation) #0.5849975
+
+p_value <- cor.test(df1$x, df1$y)$p.value
+
+print(p_value) # 1.745571e-85
+
+
+## points in each quadrant
+library(dplyr)
+
+# Modify the code to count 'Both significant', 'TBX5 significant', and 'CHD4 significant' in each quadrant
+counts <- df %>% 
+  filter(sig != "Not significant") %>%  # Filter out 'Not significant' rows
+  mutate(quadrant = case_when(x > 0 & y > 0 ~ "Quadrant 1",
+                              x < 0 & y > 0 ~ "Quadrant 2",
+                              x < 0 & y < 0 ~ "Quadrant 3",
+                              x > 0 & y < 0 ~ "Quadrant 4")) %>% 
+  group_by(quadrant, sig) %>%  # Group by both quadrant and significance type
+  summarize(count = n(), .groups = 'drop')  # Count the number of occurrences and drop groups to simplify output
+
+# Print the counts for each quadrant and significance type
+print(counts)
+
+df = df[df$sig == "Both significant", ]
+
+ggplot(data=df, aes(x=x, y=y)) +
+  geom_point(aes(color=in_list), size=1.5, alpha=0.5) +
+  scale_color_manual(values = c("None"="black", "List 1"="red", "List 2"="blue")) +
+  theme_classic() +
+  xlab("X axis label") + ylab("Y axis label") +
+  scale_x_continuous(expand = c(0.1, 0.1), limits = c(-5, 5)) +
+  scale_y_continuous(expand = c(0.1, 0.1), limits = c(-5, 5)) +
+  geom_smooth(method = "lm", se=FALSE, color="black") +
+  theme(axis.line = element_line(size = 0.5, colour = "black"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.border = element_blank(), panel.background = element_blank(),
+        legend.title = element_blank())
+
+
+## Compare CHD4 single cell and bulk RNA_seq data
+
+setwd('~/Desktop/NGS_analysis/CHD4_TBX5/multiome/DEG')
+chd4bulk <- read.csv('deseq2_with_labels.csv')
+combined<-inner_join(markers, chd4bulk, by='gene')
+
+df <- data.frame(x = combined$avg_log2FC.x, y = combined$avg_log2FC.y, 
+                   sig1 = combined$p_val_adj, sig2 = combined$padj, gene = combined$gene)
+
+
+# Create a new column to indicate the significance level of each data point
+df$sig <- ifelse(df$sig1 < 0.05 & df$sig2 < 0.05, "Both_significant",
+                 ifelse(df$sig1 < 0.05 & df$sig2 >= 0.05, "single_cell_sig",
+                        ifelse(df$sig1 >= 0.05 & df$sig2 < 0.05, "bulk_significant",
+                               "Not significant")))
+# Create the dot plot using ggplot2
+ggplot(df, aes(x = x, y = -y)) +
+  geom_point(aes(color = sig), size = 1) +
+  scale_color_manual(values = c("Both_significant" = "red", 
+                                "single_cell_sig" = "blue",
+                                "bulk_significant" = "green",
+                                "Not significant" = "black")) +
+  # Set limits for x and y axes from -5 to 5
+  xlim(-5, 5) +
+  ylim(-5, 5) +
+  theme(axis.line = element_line(colour = "black", size = 1),
+        axis.text.x = element_text(size = 12),  # Set axis text size for x-axis
+        axis.text.y = element_text(size = 12),  # Set axis text size for y-axis
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line.x = element_line(colour = "black", size = 1.2),
+        axis.line.y = element_line(colour = "black", size = 1.2),
+        panel.border = element_blank(),
+        plot.background = element_blank()) 
+
+
+library(dplyr)
+
+df1 = filter(df, sig == "Both_significant")
+
+correlation = cor.test(df1$x, df1$y)
+
+print(correlation) #0.8352
+
+p_value <- cor.test(df1$x, df1$y)$p.value
+
+print(p_value) # 1.895478e-302
+
+# Modify the code to count 'Both significant', 'TBX5 significant', and 'CHD4 significant' in each quadrant
+counts <- df %>% 
+  filter(sig != "Not significant") %>%  # Filter out 'Not significant' rows
+  mutate(quadrant = case_when(x > 0 & -y > 0 ~ "Quadrant 1",
+                              x < 0 & -y > 0 ~ "Quadrant 2",
+                              x < 0 & -y < 0 ~ "Quadrant 3",
+                              x > 0 & -y < 0 ~ "Quadrant 4")) %>% 
+  group_by(quadrant, sig) %>%  # Group by both quadrant and significance type
+  summarize(count = n(), .groups = 'drop')  # Count the number of occurrences and drop groups to simplify output
+
+# Print the counts for each quadrant and significance type
+print(counts)
+
+
+df = df[df$sig == "Both significant", ]
+
+ggplot(data=df, aes(x=x, y=y)) +
+  geom_point(aes(color=in_list), size=1.5, alpha=0.5) +
+  scale_color_manual(values = c("None"="black", "List 1"="red", "List 2"="blue")) +
+  theme_classic() +
+  xlab("X axis label") + ylab("Y axis label") +
+  scale_x_continuous(expand = c(0.1, 0.1), limits = c(-5, 5)) +
+  scale_y_continuous(expand = c(0.1, 0.1), limits = c(-5, 5)) +
+  geom_smooth(method = "lm", se=FALSE, color="black") +
+  theme(axis.line = element_line(size = 0.5, colour = "black"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.border = element_blank(), panel.background = element_blank(),
+        legend.title = element_blank())
+
+
+
+## aCM sel genes
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# Load the list of genes to highlight (assuming the CSV has a 'gene' column)
+# Example CSV file: 'highlight_genes.csv'
+highlight_genes <- atrialpeaks
+
+# If you have multiple CSV files, you can concatenate them:
+# highlight_genes <- c(read.csv("highlight_genes1.csv")$gene, read.csv("highlight_genes2.csv")$gene)
+
+# Ensure that the `highlight_genes` vector contains the list of genes you want to highlight
+head(highlight_genes)
+
+deg_results <- markers
+
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# Load the list of genes to highlight (assuming the CSV has a 'gene' column)
+highlight_genes <- ventpeaks$gene
+
+# Ensure that the `highlight_genes` vector contains the list of genes you want to highlight
+head(highlight_genes)
+
+
+# Add gene names to the rownames if not already added
+deg_results$gene <- rownames(deg_results)
+
+
+deg_results <- deg_results %>%
+  mutate(highlight = ifelse(gene %in% highlight_genes, "Highlight", "No Highlight"))
+
+# Create the volcano plot
+volcano_plot <- ggplot(deg_results, aes(x = avg_log2FC, y = -log10(p_val_adj))) +
+  
+  # Plot the points, coloring only the highlighted genes and setting others to grey
+  geom_point(aes(color = highlight), alpha = 0.8, size = 2.5) +
+  
+  # Define the color scheme: only highlighted genes are colored, all others are grey
+  scale_color_manual(values = c("Highlight" = "red", "No Highlight" = "grey")) +
+  
+  # Add labels for the highlighted genes
+  geom_text_repel(data = subset(deg_results, highlight == "Highlight"), 
+                  aes(label = gene), size = 3, max.overlaps = 10) +
+  
+  # Add titles and labels
+  labs(title = "Volcano Plot of DEGs (Highlighted Genes)",
+       x = "log2 Fold Change",
+       y = "-log10 Adjusted p-value") +
+  
+  # Customize the appearance
+  theme_minimal() +
+  theme(legend.position = "right", 
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+
+# Print the plot
+print(volcano_plot)
+
