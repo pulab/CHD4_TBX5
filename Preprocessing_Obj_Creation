@@ -1,0 +1,581 @@
+library(Seurat)
+library(Signac)
+library(JASPAR2020)
+library(TFBSTools)
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(patchwork)
+library(EnsDb.Mmusculus.v79)
+library(BSgenome.Mmusculus.UCSC.mm10)
+library(stringr)
+library(ggplot2)
+library(SeuratDisk)
+library(GenomicRanges)
+library(dplyr)
+library(patchwork)
+set.seed(1234)
+
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79)
+ucsc.levels <- str_replace(string=paste("chr",seqlevels(annotation),sep=""), pattern="chrMT", replacement="chrM")
+seqlevels(annotation) <- ucsc.levels
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S2')
+# read in peak sets
+peaks.S2 <- read.table(
+  file = "atac_peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S4')
+peaks.S4 <- read.table(
+  file = "atac_peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO1')
+# read in peak sets
+peaks.KO1 <- read.table(
+  file = "atac_peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO2')
+peaks.KO2 <- read.table(
+  file = "atac_peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT1')
+# read in peak sets
+peaks.WT1 <- read.table(
+  file = "atac_peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT2')
+peaks.WT2 <- read.table(
+  file = "atac_peaks.bed",
+  col.names = c("chr", "start", "end")
+)
+
+
+
+# convert to genomic ranges
+gr.S2 <- makeGRangesFromDataFrame(peaks.S2)
+gr.S4 <- makeGRangesFromDataFrame(peaks.S4)
+gr.KO1 <- makeGRangesFromDataFrame(peaks.KO1)
+gr.KO2 <- makeGRangesFromDataFrame(peaks.KO2)
+gr.WT1 <- makeGRangesFromDataFrame(peaks.WT1)
+gr.WT2 <- makeGRangesFromDataFrame(peaks.WT2)
+
+
+
+# Create a unified set of peaks to quantify in each dataset
+combined.peaks <- reduce(x = c(gr.S2, gr.S4,gr.KO1,gr.KO2,gr.WT1,gr.WT2))
+
+# Filter out bad peaks based on length
+peakwidths <- width(combined.peaks)
+combined.peaks <- combined.peaks[peakwidths  < 10000 & peakwidths > 20]
+combined.peaks
+
+write.csv(combined.peaks, file = 'combinedpeaks.csv')
+
+#####load metadata
+# load metadata
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S2')
+md.S2 <- read.table(
+  file = "per_barcode_metrics.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-2, ] # remove the first row
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S4')
+
+md.S4 <- read.table(
+  file = "per_barcode_metrics.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-2, ]
+
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO1')
+
+md.KO1 <- read.table(
+  file = "per_barcode_metrics.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-2, ]
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO2')
+
+md.KO2 <- read.table(
+  file = "per_barcode_metrics.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-2, ]
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT1')
+
+md.WT1 <- read.table(
+  file = "per_barcode_metrics.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-2, ]
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT2')
+
+md.WT2 <- read.table(
+  file = "per_barcode_metrics.csv",
+  stringsAsFactors = FALSE,
+  sep = ",",
+  header = TRUE,
+  row.names = 1
+)[-2, ]
+
+
+
+
+
+md.S2 <- md.S2[md.S2$atac_raw_reads > 250, ]
+md.S4 <- md.S4[md.S4$atac_raw_reads > 250, ]
+md.KO1 <- md.KO1[md.KO1$atac_raw_reads > 250, ]
+md.KO2 <- md.KO2[md.KO2$atac_raw_reads > 250, ]
+md.WT1 <- md.WT1[md.WT1$atac_raw_reads > 250, ]
+md.WT2 <- md.WT2[md.WT2$atac_raw_reads > 250, ]
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S2')
+# create fragment objects
+frags.S2 <- CreateFragmentObject(
+  path = "atac_fragments.tsv.gz",
+  cells = rownames(md.S2)
+)
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S4')
+
+frags.S4 <- CreateFragmentObject(
+  path = "atac_fragments.tsv.gz",
+  cells = rownames(md.S4)
+)
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO1')
+
+frags.KO1 <- CreateFragmentObject(
+  path = "atac_fragments.tsv.gz",
+  cells = rownames(md.KO1)
+)
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO2')
+
+frags.KO2 <- CreateFragmentObject(
+  path = "atac_fragments.tsv.gz",
+  cells = rownames(md.KO2)
+)
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT1')
+
+frags.WT1 <- CreateFragmentObject(
+  path = "atac_fragments.tsv.gz",
+  cells = rownames(md.WT1)
+)
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT2')
+
+frags.WT2 <- CreateFragmentObject(
+  path = "atac_fragments.tsv.gz",
+  cells = rownames(md.WT2)
+)
+
+
+S2.counts <- FeatureMatrix(
+  fragments = frags.S2,
+  features = combined.peaks,
+  cells = rownames(md.S2)
+)
+
+S4.counts <- FeatureMatrix(
+  fragments = frags.S4,
+  features = combined.peaks,
+  cells = rownames(md.S4)
+)
+WT1.counts <- FeatureMatrix(
+  fragments = frags.WT1,
+  features = combined.peaks,
+  cells = rownames(md.WT1)
+)
+KO1.counts <- FeatureMatrix(
+  fragments = frags.KO1,
+  features = combined.peaks,
+  cells = rownames(md.KO1)
+)
+KO2.counts <- FeatureMatrix(
+  fragments = frags.KO2,
+  features = combined.peaks,
+  cells = rownames(md.KO2)
+)
+WT2.counts <- FeatureMatrix(
+  fragments = frags.WT2,
+  features = combined.peaks,
+  cells = rownames(md.WT2)
+)
+#Create Seurat objects
+# Repeat the following 4 times by changing the folder to create 4 Seurat objects
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S2')
+counts <- Read10X_h5("raw_feature_bc_matrix.h5")
+# create a Seurat object containing the RNA adata
+S2_assay <- CreateChromatinAssay(S2.counts, fragments = frags.S2, annotation = annotation, min.features = -1)
+S2 <- CreateSeuratObject(S2_assay, assay = "ATAC", meta.data=md.S2)
+S2[["RNA"]]<- CreateAssayObject(counts=counts$'Gene Expression'[,colnames(S2)])
+S2
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/S4')
+counts <- Read10X_h5("raw_feature_bc_matrix.h5")
+# create a Seurat object containing the RNA adata
+S4_assay <- CreateChromatinAssay(S4.counts, fragments = frags.S4, annotation = annotation, min.features =-1)
+S4 <- CreateSeuratObject(S4_assay, assay = "ATAC", meta.data=md.S4)
+S4[["RNA"]]<- CreateAssayObject(counts=counts$'Gene Expression'[,colnames(S4)])
+S4
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO1')
+counts <- Read10X_h5("raw_feature_bc_matrix.h5")
+# create a Seurat object containing the RNA adata
+KO1_assay <- CreateChromatinAssay(KO1.counts, fragments = frags.KO1, annotation = annotation, min.features =-1)
+KO1 <- CreateSeuratObject(KO1_assay, assay = "ATAC", meta.data=md.KO1)
+KO1[["RNA"]]<- CreateAssayObject(counts=counts$'Gene Expression'[,colnames(KO1)])
+KO1
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/KO2')
+counts <- Read10X_h5("raw_feature_bc_matrix.h5")
+# create a Seurat object containing the RNA adata
+KO2_assay <- CreateChromatinAssay(KO2.counts, fragments = frags.KO2, annotation = annotation, min.features =-1)
+KO2 <- CreateSeuratObject(KO2_assay, assay = "ATAC", meta.data=md.KO2)
+KO2[["RNA"]]<- CreateAssayObject(counts=counts$'Gene Expression'[,colnames(KO2)])
+KO2
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT1')
+counts <- Read10X_h5("raw_feature_bc_matrix.h5")
+# create a Seurat object containing the RNA adata
+WT1_assay <- CreateChromatinAssay(WT1.counts, fragments = frags.WT1, annotation = annotation, min.features =-1)
+WT1 <- CreateSeuratObject(WT1_assay, assay = "ATAC", meta.data=md.WT1)
+WT1[["RNA"]]<- CreateAssayObject(counts=counts$'Gene Expression'[,colnames(WT1)])
+WT1
+
+setwd('/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/WT2')
+counts <- Read10X_h5("raw_feature_bc_matrix.h5")
+# create a Seurat object containing the RNA adata
+WT2_assay <- CreateChromatinAssay(WT2.counts, fragments = frags.WT2, annotation = annotation, min.features =-1)
+WT2 <- CreateSeuratObject(WT2_assay, assay = "ATAC", meta.data=md.WT2)
+WT2[["RNA"]]<- CreateAssayObject(counts=counts$'Gene Expression'[,colnames(WT2)])
+WT2
+
+#######
+###### QC
+#######
+## Calcualte TSS.enrichment, nucleosome_signal, and % mito
+DefaultAssay(S2) <- 'ATAC'
+DefaultAssay(S4) <- 'ATAC'
+DefaultAssay(KO1) <- 'ATAC'
+DefaultAssay(KO2) <- 'ATAC'
+DefaultAssay(WT1) <- 'ATAC'
+DefaultAssay(WT2) <- 'ATAC'
+
+S2 <- NucleosomeSignal(S2)
+S4 <- NucleosomeSignal(S4)
+KO1 <- NucleosomeSignal(KO1)
+KO2 <- NucleosomeSignal(KO2)
+WT1 <- NucleosomeSignal(WT1)
+WT2 <- NucleosomeSignal(WT2)
+
+S2 <- TSSEnrichment(S2)
+S4 <- TSSEnrichment(S4)
+KO1 <- TSSEnrichment(KO1)
+KO2 <- TSSEnrichment(KO2)
+WT1 <- TSSEnrichment(WT1)
+WT2 <- TSSEnrichment(WT2)
+seurat_filtered <-TSSEnrichment(seurat_filtered)
+
+DefaultAssay(S2)<-'RNA'
+S2[["percent.mito"]]<-PercentageFeatureSet(S2, pattern = "^mt-")
+
+DefaultAssay(S4)<-'RNA'
+S4[["percent.mito"]]<-PercentageFeatureSet(S4, pattern = "^mt-")
+
+DefaultAssay(KO1)<-'RNA'
+KO1[["percent.mito"]]<-PercentageFeatureSet(KO1, pattern = "^mt-")
+
+DefaultAssay(KO2)<-'RNA'
+KO2[["percent.mito"]]<-PercentageFeatureSet(KO2, pattern = "^mt-")
+
+DefaultAssay(WT1)<-'RNA'
+WT1[["percent.mito"]]<-PercentageFeatureSet(WT1, pattern = "^mt-")
+
+DefaultAssay(WT2)<-'RNA'
+WT2[["percent.mito"]]<-PercentageFeatureSet(WT2, pattern = "^mt-")
+
+
+
+
+VlnPlot(
+  object = seurat_filtered,
+  features = c("nCount_RNA", "nCount_ATAC", 'TSS.enrichment', 'percent.mito'),
+  ncol = 4,
+  pt.size = 0
+)
+VlnPlot(
+  object = S4,
+  features = c("nCount_RNA", "nCount_ATAC", 'TSS.enrichment', 'percent.mito'),
+  ncol = 4,
+  pt.size = 0
+)
+VlnPlot(
+  object = KO1,
+  features = c("nCount_RNA", "nCount_ATAC", 'TSS.enrichment', 'percent.mito'),
+  ncol = 4,
+  pt.size = 0
+)
+VlnPlot(
+  object = KO2,
+  features = c("nCount_RNA", "nCount_ATAC", 'TSS.enrichment', 'percent.mito'),
+  ncol = 4,
+  pt.size = 0
+)
+VlnPlot(
+  object = WT1,
+  features = c("nCount_RNA", "nCount_ATAC", 'TSS.enrichment', 'percent.mito'),
+  ncol = 4,
+  pt.size = 0
+)
+VlnPlot(
+  object = WT2,
+  features = c("nCount_RNA", "nCount_ATAC", 'TSS.enrichment', 'percent.mito'),
+  ncol = 4,
+  pt.size = 0
+)
+
+View(S2@meta.data)
+####Subset only good cells
+S2_sub <- subset(
+  x = S2,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 35000 &
+    nCount_ATAC > 250 &
+    nCount_RNA > 250 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1 &
+    percent.mito < 25
+)
+S2_sub
+S4_sub <- subset(
+  x = S4,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 35000 &
+    nCount_ATAC > 250 &
+    nCount_RNA > 250 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1 &
+    percent.mito < 25
+)
+S4_sub
+
+KO1_sub <- subset(
+  x = KO1,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 35000 &
+    nCount_ATAC > 250 &
+    nCount_RNA > 250 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1 &
+    percent.mito < 25
+)
+KO1_sub
+KO2_sub <- subset(
+  x = KO2,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 35000 &
+    nCount_ATAC > 250 &
+    nCount_RNA > 250 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1 &
+    percent.mito < 25
+)
+KO2_sub
+WT1_sub <- subset(
+  x = WT1,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 35000 &
+    nCount_ATAC > 250 &
+    nCount_RNA > 250 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1 &
+    percent.mito < 25
+)
+WT1_sub
+WT2_sub <- subset(
+  x = WT2,
+  subset = nCount_ATAC < 100000 &
+    nCount_RNA < 35000 &
+    nCount_ATAC > 250 &
+    nCount_RNA > 250 &
+    nucleosome_signal < 2 &
+    TSS.enrichment > 1 &
+    percent.mito < 25
+)
+WT2_sub
+
+
+saveRDS(S2, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/S2", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(S2_sub, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/S2_sub", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(S4, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/S4", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(S4_sub, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/S4_sub", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(KO1, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/KO1", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(KO1_sub, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/KO1_sub", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(KO2, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/KO2", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(KO2_sub, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/KO2_sub", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(WT1, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/WT1", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(WT1_sub, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/WT1_sub", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(WT2, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/WT2", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(WT2_sub, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/WT2_sub", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+
+S2 <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/S2_sub")
+S4 <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/S4_sub")
+KO1 <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/KO1_sub")
+KO2 <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/KO2_sub")
+WT1 <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/WT1_sub")
+WT2 <- readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/WT2_sub")
+### add dataset information
+S2$dataset <- 'S2'
+S4$dataset <- 'S4'
+KO1$dataset <- 'KO1'
+KO2$dataset <- 'KO2'
+WT1$dataset <- 'WT1'
+WT2$dataset <- 'WT2'
+VlnPlot(
+  object = seurat_filtered,
+  features = c('nCount_ATAC', 'TSS.enrichment', 'blacklist_ratio', 'nucleosome_signal', 'pct_reads_in_peaks'),
+  pt.size = 0.1,
+  ncol = 5
+)
+
+TSSPlot(seurat_filtered, assay = 'ATAC', group.by = 'sample', idents = NULL)
+
+AFmulti <- merge(S2, y = list(S4, KO1, KO2, WT1, WT2), project = "new")
+DefaultAssay(AFmulti) <- 'RNA'
+
+## RNA UMAP
+##normalize
+AFmulti <- NormalizeData(AFmulti)
+AFmulti <- FindVariableFeatures(AFmulti, selection.method = "vst", nfeatures = 2000)
+
+###This is too big for my computer, will need to repeat on E2 (This actually works if AFmulti is the only seurat loaded)
+all.genes <- rownames(AFmulti)
+AFmulti <- ScaleData(AFmulti, assay ='RNA')
+###
+
+
+#### WNN vignet pipeline
+options(future.globals.maxSize = 2 * 1024^3)  # 2 GB
+
+DefaultAssay(AFmulti) <- "RNA"
+AFmulti <- SCTransform(AFmulti, verbose = FALSE) %>% RunPCA() %>% RunUMAP(dims = 1:20, reduction.name = 'umap.rna', reduction.key = 'rnaUMAP_')
+
+DefaultAssay(AFmulti) <- "ATAC"
+AFmulti <- RunTFIDF(AFmulti)
+AFmulti <- FindTopFeatures(AFmulti, min.cutoff = 'q0')
+AFmulti <- RunSVD(AFmulti)
+AFmulti <- RunUMAP(AFmulti, reduction = 'lsi', dims = 2:15, reduction.name = "umap.atac", reduction.key = "atacUMAP_")
+
+AFmulti <- FindMultiModalNeighbors(AFmulti, reduction.list = list("pca", "lsi"), dims.list = list(1:15, 2:15))
+AFmulti <- RunUMAP(AFmulti, nn.name = "weighted.nn", reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+AFmulti <- FindClusters(AFmulti, graph.name = "wsnn", algorithm = 1, verbose = FALSE, resolution = 0.8)
+
+
+seurat_filtered <- SetIdent(seurat_filtered, value = seurat_filtered@meta.data$cell_state)
+p1 <- DimPlot(seurat_filtered, reduction = "umap.rna",  label = TRUE, label.size = 5.5, repel = TRUE) + ggtitle("RNA")
+p2 <- DimPlot(seurat_filtered, reduction = "umap.atac", label = TRUE, label.size = 5.5, repel = TRUE) + ggtitle("ATAC")
+p3 <- DimPlot(seurat_filtered, reduction = "wnn.umap",  label = TRUE, label.size = 5.5, repel = TRUE) + ggtitle("WNN")
+p1 + p2 + p3 & NoLegend() & theme(plot.title = element_text(hjust = 1))
+DimPlot(seurat_filtered, reduction = "wnn.umap", split.by = "dataset", label = FALSE) + NoLegend()
+
+#doubletfinder
+library(Seurat)
+library(DoubletFinder)
+multiome<-readRDS("/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/alldatasets")
+DefaultAssay(multiome) <- "RNA"
+multiome <- NormalizeData(multiome)
+multiome <- FindVariableFeatures(multiome, selection.method = "vst", nfeatures = 2000)
+multiome <- ScaleData(multiome, features = rownames(multiome))
+multiome <- RunPCA(multiome, features = VariableFeatures(object = multiome))
+
+# Run a parameter sweep to find optimal pK value
+sweep.res.list <- paramSweep(multiome, PCs = 1:20, sct = FALSE)
+sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)
+bcmvn <- find.pK(sweep.stats)
+
+# Visualize the bcmvn to choose an optimal pK
+# Plot the pK values against BCmetric to visualize the optimal pK
+library(ggplot2)
+ggplot(bcmvn, aes(x = as.numeric(as.character(pK)), y = BCmetric)) +
+  geom_point() +
+  geom_line() +
+  labs(x = "pK", y = "BCmetric") +
+  theme_minimal()
+
+# Find the pK that corresponds to the maximum BCmetric
+optimal_pK <- bcmvn$pK[which.max(bcmvn$BCmetric)]
+
+# Print the optimal pK
+print(optimal_pK)
+
+str(bcmvn$pK)  # Check the data type of pK
+# Convert pK from factor to numeric
+bcmvn$pK <- as.numeric(as.character(bcmvn$pK))
+
+# Plot the pK values against BCmetric to visualize the optimal pK
+library(ggplot2)
+ggplot(bcmvn, aes(x = pK, y = BCmetric)) +
+  geom_point() +
+  geom_line() +
+  labs(x = "pK", y = "BCmetric") +
+  theme_minimal()
+
+# Find the pK that corresponds to the maximum BCmetric
+optimal_pK <- bcmvn$pK[which.max(bcmvn$BCmetric)]
+
+# Print the optimal pK
+print(optimal_pK)
+
+# Set the expected number of doublets (e.g., 7.5% of total cells)
+nExp_poi <- round(0.03 * ncol(multiome))  # Adjust this based on your dataset
+
+# Apply DoubletFinder using the optimal pK
+multiome <- doubletFinder(multiome, 
+                                  PCs = 1:20, 
+                                  pN = 0.25, 
+                                  pK = optimal_pK, 
+                                  nExp = nExp_poi, 
+                                  reuse.pANN = FALSE)
+
+# View the new metadata column for doublet classification
+head(multiome@meta.data)
+
+# Visualize the doublets on a UMAP (if UMAP is already run)
+DimPlot(multiome,reduction = "wnn.umap", group.by = "DF.classifications_0.25_0.01_851")
+
+## cluster 18 is predominantly doublets, will remove cluster 18. Other clusters have low doublet score
+# Subset the Seurat object to remove doublets
+seurat_filtered <- subset(multiome, subset = DF.classifications_0.25_0.01_851 == "Singlet")
+seurat_filtered
+saveRDS(seurat_filtered, file = "/Users/masonsweat/Desktop/NGS_analysis/CHD4_TBX5/multiome/QC_obj/combined_nodoublets", ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+
